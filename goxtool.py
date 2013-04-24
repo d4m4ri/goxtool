@@ -38,6 +38,7 @@ import threading
 #
 # Curses user interface
 #
+ORDER_DEPTH_AMOUNT_LARGE = 100 # Amounts >= to this will be highlighted (to change color see "book_vol_large")
 HEIGHT_STATUS   = 2
 HEIGHT_CON      = 7
 WIDTH_ORDERBOOK = 50    # Width of order book panel
@@ -50,6 +51,7 @@ COLORS = [
     ["book_ask",        curses.COLOR_BLACK,   curses.COLOR_RED],
     ["book_own",        curses.COLOR_BLACK,   curses.COLOR_YELLOW],
     ["book_vol",        curses.COLOR_BLACK,   curses.COLOR_BLUE],
+    ["book_vol_large",  curses.COLOR_BLACK,   curses.COLOR_WHITE],
 
     ["chart_text",      curses.COLOR_BLACK,   curses.COLOR_WHITE],
     ["chart_up",        curses.COLOR_BLACK,   curses.COLOR_GREEN],
@@ -251,6 +253,7 @@ class WinOrderBook(Win):
         col_bid = COLOR_PAIR["book_bid"]
         col_ask = COLOR_PAIR["book_ask"]
         col_vol = COLOR_PAIR["book_vol"]
+        col_vol_large = COLOR_PAIR["book_vol_large"]
         col_own = COLOR_PAIR["book_own"]
 
         book = self.gox.orderbook
@@ -264,11 +267,21 @@ class WinOrderBook(Win):
         i = 0
         cnt = len(book.bids)
         while pos < self.height and i < cnt:
-            self.addstr(pos, 8, "{number:>7.{digits}f}".format(number=goxapi.int2float(book.bids[i].volume, "BTC"), digits=2), col_vol)
-            self.addstr(pos, 16,  "{number:>7.{digits}f}".format(number=goxapi.int2float(book.bids[i].price, book.gox.currency), digits=4), col_bid)
+            # Amount
+            self.addstr(
+                pos, 8,
+                "{number:>{pad}.{digits}f}".format(number=goxapi.int2float(book.bids[i].volume, "BTC"), digits=2, pad=7),
+                col_vol if goxapi.int2float(book.bids[i].volume, "BTC") < ORDER_DEPTH_AMOUNT_LARGE else col_vol_large
+            )
+            # Price
+            self.addstr(
+                pos, 16,
+                "{number:>{pad}.{digits}f}".format(number=goxapi.int2float(book.bids[i].price, book.gox.currency), digits=4, pad=7),
+                col_bid
+            )
             ownvol = book.get_own_volume_at(book.bids[i].price)
             if ownvol:
-                self.addstr(pos, 0, "{number:>7.{digits}f}".format(number=goxapi.int2float(ownvol, "BTC"), digits=4), col_own)
+                self.addstr(pos, 0, "{number:>{pad}.{digits}f}".format(number=goxapi.int2float(ownvol, "BTC"), digits=4, pad=7), col_own)
             pos += 1
             i += 1
 
@@ -277,11 +290,21 @@ class WinOrderBook(Win):
         i = 0
         cnt = len(book.asks)
         while pos < self.height and i < cnt:
-            self.addstr(pos, 26, "{number:<7.{digits}f}".format(number=goxapi.int2float(book.asks[i].price, book.gox.currency), digits=4), col_ask)
-            self.addstr(pos, 35, "{number:<7.{digits}f}".format(number=goxapi.int2float(book.asks[i].volume, "BTC"), digits=2), col_vol)
+            # Price
+            self.addstr(
+                pos, 26,
+                "{number:<{pad}.{digits}f}".format(number=goxapi.int2float(book.asks[i].price, book.gox.currency), digits=4, pad=7),
+                col_ask
+            )
+            # Amount
+            self.addstr(
+                pos, 35,
+                "{number:<{pad}.{digits}f}".format(number=goxapi.int2float(book.asks[i].volume, "BTC"), digits=2, pad=7),
+                col_vol if goxapi.int2float(book.asks[i].volume, "BTC") < ORDER_DEPTH_AMOUNT_LARGE else col_vol_large
+            )
             ownvol = book.get_own_volume_at(book.asks[i].price)
             if ownvol:
-                self.addstr(pos, 41, "{number:>7.{digits}f}".format(number=goxapi.int2float(ownvol, "BTC"), digits=4), col_own)
+                self.addstr(pos, 41, "{number:>{pad}.{digits}f}".format(number=goxapi.int2float(ownvol, "BTC"), digits=4, pad=7), col_own)
             pos += 1
             i += 1
 
