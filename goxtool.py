@@ -22,7 +22,6 @@ framework for experimenting with trading bots
 #  MA 02110-1301, USA.
 
 # pylint: disable=C0301,C0302,R0902,R0903,R0912,R0913,R0915,R0922
-
 import argparse
 import curses
 import curses.panel
@@ -36,40 +35,35 @@ import time
 import traceback
 import threading
 
-
 #
+# Curses user interface
 #
-# curses user interface
-#
-
 HEIGHT_STATUS   = 2
 HEIGHT_CON      = 7
-WIDTH_ORDERBOOK = 49
+WIDTH_ORDERBOOK = 50    # Width of order book panel
+COLORS = [
+    ["con_text",        curses.COLOR_BLUE,    curses.COLOR_CYAN],
+    ["status_text",     curses.COLOR_BLUE,    curses.COLOR_CYAN],
 
-COLORS =    [["con_text",       curses.COLOR_BLUE,    curses.COLOR_CYAN]
-            ,["status_text",    curses.COLOR_BLUE,    curses.COLOR_CYAN]
+    ["book_text",       curses.COLOR_BLACK,   curses.COLOR_BLUE],
+    ["book_bid",        curses.COLOR_BLACK,   curses.COLOR_GREEN],
+    ["book_ask",        curses.COLOR_BLACK,   curses.COLOR_RED],
+    ["book_own",        curses.COLOR_BLACK,   curses.COLOR_YELLOW],
+    ["book_vol",        curses.COLOR_BLACK,   curses.COLOR_BLUE],
 
-            ,["book_text",      curses.COLOR_BLACK,   curses.COLOR_BLUE]
-            ,["book_bid",       curses.COLOR_BLACK,   curses.COLOR_GREEN]
-            ,["book_ask",       curses.COLOR_BLACK,   curses.COLOR_RED]
-            ,["book_own",       curses.COLOR_BLACK,   curses.COLOR_YELLOW]
-            ,["book_vol",       curses.COLOR_BLACK,   curses.COLOR_BLUE]
+    ["chart_text",      curses.COLOR_BLACK,   curses.COLOR_WHITE],
+    ["chart_up",        curses.COLOR_BLACK,   curses.COLOR_GREEN],
+    ["chart_down",      curses.COLOR_BLACK,   curses.COLOR_RED],
+    ["order_pending",   curses.COLOR_BLACK,   curses.COLOR_BLUE],
 
-            ,["chart_text",     curses.COLOR_BLACK,   curses.COLOR_WHITE]
-            ,["chart_up",       curses.COLOR_BLACK,   curses.COLOR_GREEN]
-            ,["chart_down",     curses.COLOR_BLACK,   curses.COLOR_RED]
-            ,["order_pending",  curses.COLOR_BLACK,   curses.COLOR_BLUE]
+    ["dialog_text",     curses.COLOR_BLUE,   curses.COLOR_CYAN],
+    ["dialog_sel",      curses.COLOR_CYAN,   curses.COLOR_BLUE],
+    ["dialog_sel_text", curses.COLOR_BLUE,   curses.COLOR_YELLOW],
+    ["dialog_sel_sel",  curses.COLOR_YELLOW, curses.COLOR_BLUE],
 
-            ,["dialog_text",     curses.COLOR_BLUE,   curses.COLOR_CYAN]
-            ,["dialog_sel",      curses.COLOR_CYAN,   curses.COLOR_BLUE]
-            ,["dialog_sel_text", curses.COLOR_BLUE,   curses.COLOR_YELLOW]
-            ,["dialog_sel_sel",  curses.COLOR_YELLOW, curses.COLOR_BLUE]
-
-            ,["dialog_bid_text", curses.COLOR_GREEN,  curses.COLOR_BLACK]
-            ,["dialog_ask_text", curses.COLOR_RED,    curses.COLOR_WHITE]
-
-            ]
-
+    ["dialog_bid_text", curses.COLOR_GREEN,  curses.COLOR_BLACK],
+    ["dialog_ask_text", curses.COLOR_RED,    curses.COLOR_WHITE],
+]
 COLOR_PAIR = {}
 
 def init_colors():
@@ -193,7 +187,9 @@ class Win:
         self.height = self.termheight
         self.calc_size()
 
-
+#
+# WinConsole class manage console output.
+#
 class WinConsole(Win):
     """The console window at the bottom"""
     def __init__(self, stdscr, gox):
@@ -229,7 +225,9 @@ class WinConsole(Win):
         self.win.addstr("\n" + txt,  COLOR_PAIR["con_text"])
         self.done_paint()
 
-
+#
+# WinOrderBook class manage windows(?)
+#
 class WinOrderBook(Win):
     """the orderbook window"""
 
@@ -257,30 +255,33 @@ class WinOrderBook(Win):
 
         book = self.gox.orderbook
 
-        # print the bids
+        #
+        # Market order depth (level 2)
+        #
+
+        # Bid list
         pos = 0
         i = 0
         cnt = len(book.bids)
         while pos < self.height and i < cnt:
-            self.addstr(pos, 0, goxapi.int2str(book.bids[i].volume, "BTC"), col_vol)
-            self.addstr(pos, 12,  goxapi.int2str(book.bids[i].price, book.gox.currency), col_bid)
+            self.addstr(pos, 8, "{number:>7.{digits}f}".format(number=goxapi.int2float(book.bids[i].volume, "BTC"), digits=2), col_vol)
+            self.addstr(pos, 16,  "{number:>7.{digits}f}".format(number=goxapi.int2float(book.bids[i].price, book.gox.currency), digits=4), col_bid)
             ownvol = book.get_own_volume_at(book.bids[i].price)
             if ownvol:
-                self.addstr(pos, 48, goxapi.int2str(ownvol, "BTC"), col_own)
+                self.addstr(pos, 0, "{number:>7.{digits}f}".format(number=goxapi.int2float(ownvol, "BTC"), digits=4), col_own)
             pos += 1
             i += 1
 
-        # print the asks
+        # Ask list
         pos = 0
         i = 0
         cnt = len(book.asks)
         while pos < self.height and i < cnt:
-
-            self.addstr(pos, 24, goxapi.int2str(book.asks[i].price, book.gox.currency), col_ask)
-            self.addstr(pos, 36, goxapi.int2str(book.asks[i].volume, "BTC"), col_vol)
+            self.addstr(pos, 26, "{number:<7.{digits}f}".format(number=goxapi.int2float(book.asks[i].price, book.gox.currency), digits=4), col_ask)
+            self.addstr(pos, 35, "{number:<7.{digits}f}".format(number=goxapi.int2float(book.asks[i].volume, "BTC"), digits=2), col_vol)
             ownvol = book.get_own_volume_at(book.asks[i].price)
             if ownvol:
-                self.addstr(pos, 48, goxapi.int2str(ownvol, "BTC"), col_own)
+                self.addstr(pos, 41, "{number:>7.{digits}f}".format(number=goxapi.int2float(ownvol, "BTC"), digits=4), col_own)
             pos += 1
             i += 1
 
@@ -298,7 +299,9 @@ class WinOrderBook(Win):
                 title += " ask:" + goxapi.int2str(book.ask, self.gox.currency).strip()
                 curses.putp("\033]0;%s\007" % title)
 
-
+#
+# WinChart class manages chart windows.
+#
 class WinChart(Win):
     """the chart window"""
 
@@ -455,7 +458,9 @@ class WinChart(Win):
         """Slot for orderbook.signal_changed"""
         self.do_paint()
 
-
+#
+# WinStatus class manage ... .
+#
 class WinStatus(Win):
     """the status window at the top"""
 
@@ -497,12 +502,11 @@ class WinStatus(Win):
             str_ratio = "-"
 
         line2 = "total bid: " + str_fiat + " " + self.gox.currency + " | "
-        line2 += "total ask: " +str_btc + " BTC | "
+        line2 += "total ask: " + str_btc + " BTC | "
         line2 += "ratio: " + str_ratio + " " + self.gox.currency + "/BTC | "
         line2 += "lag: " + self.order_lag_txt
         self.addstr(0, 0, line1, COLOR_PAIR["status_text"])
         self.addstr(1, 0, line2, COLOR_PAIR["status_text"])
-
 
     def slot_changed(self, dummy_sender, dummy_data):
         """the callback funtion called by the Gox() instance"""
@@ -728,7 +732,9 @@ class TextBox():
                 self.win.refresh()
             time.sleep(0.1)
 
-
+#
+# NumberBox class manage ... .
+#
 class NumberBox(TextBox):
     """TextBox that only accepts numbers"""
     def __init__(self, dlg, posy, posx, length):
@@ -845,13 +851,9 @@ class DlgNewOrderAsk(DlgNewOrder):
         volume = goxapi.float2int(volume, "BTC")
         self.gox.sell(price, volume)
 
-
-
 #
+# LogWriter class manages logging and print hook (callback/why/dunno).
 #
-# logging, printing, etc...
-#
-
 class LogWriter():
     """connects to gox.signal_debug and logs it all to the logfile"""
     def __init__(self, gox):
@@ -874,7 +876,6 @@ class LogWriter():
         name = "%s.%s" % (sender.__class__.__module__, sender.__class__.__name__)
         logging.debug("%s:%s", name, msg)
 
-
 class PrintHook():
     """intercept stdout/stderr and send it all to gox.signal_debug instead"""
     def __init__(self, gox):
@@ -895,13 +896,9 @@ class PrintHook():
         if string != "":
             self.gox.signal_debug(self, string)
 
-
-
 #
+# Dynamically (re)loadable strategy module
 #
-# dynamically (re)loadable strategy module
-#
-
 class StrategyManager():
     """load the strategy module"""
 
@@ -936,12 +933,9 @@ class StrategyManager():
             except ImportError:
                 self.gox.debug("### could not import %s.py" % name)
 
-
 #
+# Main program
 #
-# main program
-#
-
 def main():
     """main funtion, called from within the curses.wrapper"""
 
@@ -1047,4 +1041,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
