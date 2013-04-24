@@ -44,7 +44,7 @@ import threading
 
 HEIGHT_STATUS   = 2
 HEIGHT_CON      = 7
-WIDTH_ORDERBOOK = 45
+WIDTH_ORDERBOOK = 49
 
 COLORS =    [["con_text",       curses.COLOR_BLUE,    curses.COLOR_CYAN]
             ,["status_text",    curses.COLOR_BLUE,    curses.COLOR_CYAN]
@@ -250,37 +250,37 @@ class WinOrderBook(Win):
         """paint the visible portion of the orderbook"""
         self.win.bkgd(" ",  COLOR_PAIR["book_text"])
         self.win.erase()
-        mid = self.height / 2
         col_bid = COLOR_PAIR["book_bid"]
         col_ask = COLOR_PAIR["book_ask"]
         col_vol = COLOR_PAIR["book_vol"]
         col_own = COLOR_PAIR["book_own"]
 
-        # print the asks
-        # pylint: disable=C0301
         book = self.gox.orderbook
-        pos = mid - 1
-        i = 0
-        cnt = len(book.asks)
-        while pos >= 0 and  i < cnt:
-            self.addstr(pos, 0,  goxapi.int2str(book.asks[i].price, book.gox.currency), col_ask)
-            self.addstr(pos, 12, goxapi.int2str(book.asks[i].volume, "BTC"), col_vol)
-            ownvol = book.get_own_volume_at(book.asks[i].price)
-            if ownvol:
-                self.addstr(pos, 28, goxapi.int2str(ownvol, "BTC"), col_own)
-            pos -= 1
-            i += 1
 
         # print the bids
-        pos = mid + 1
+        pos = 0
         i = 0
         cnt = len(book.bids)
-        while pos < self.height and  i < cnt:
-            self.addstr(pos, 0,  goxapi.int2str(book.bids[i].price, book.gox.currency), col_bid)
-            self.addstr(pos, 12, goxapi.int2str(book.bids[i].volume, "BTC"), col_vol)
+        while pos < self.height and i < cnt:
+            self.addstr(pos, 0, goxapi.int2str(book.bids[i].volume, "BTC"), col_vol)
+            self.addstr(pos, 12,  goxapi.int2str(book.bids[i].price, book.gox.currency), col_bid)
             ownvol = book.get_own_volume_at(book.bids[i].price)
             if ownvol:
-                self.addstr(pos, 28, goxapi.int2str(ownvol, "BTC"), col_own)
+                self.addstr(pos, 48, goxapi.int2str(ownvol, "BTC"), col_own)
+            pos += 1
+            i += 1
+
+        # print the asks
+        pos = 0
+        i = 0
+        cnt = len(book.asks)
+        while pos < self.height and i < cnt:
+
+            self.addstr(pos, 24, goxapi.int2str(book.asks[i].price, book.gox.currency), col_ask)
+            self.addstr(pos, 36, goxapi.int2str(book.asks[i].volume, "BTC"), col_vol)
+            ownvol = book.get_own_volume_at(book.asks[i].price)
+            if ownvol:
+                self.addstr(pos, 48, goxapi.int2str(ownvol, "BTC"), col_own)
             pos += 1
             i += 1
 
