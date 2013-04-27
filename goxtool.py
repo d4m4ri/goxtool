@@ -21,7 +21,8 @@ framework for experimenting with trading bots
 #  Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston,
 #  MA 02110-1301, USA.
 
-# pylint: disable=C0301,C0302,R0902,R0903,R0912,R0913,R0915,R0922
+# pylint: disable=C0301,C0302,R0902,R0903,R0912,R0913,R0914,R0915,R0922,W0703
+
 import argparse
 import curses
 import curses.panel
@@ -248,6 +249,14 @@ class WinOrderBook(Win):
 
     def paint(self):
         """paint the visible portion of the orderbook"""
+
+        def paint_row(pos, price, vol, ownvol, color):
+            """paint a row in the orderbook (bid or ask)"""
+            self.addstr(pos, 0,  goxapi.int2str(price, book.gox.currency), color)
+            self.addstr(pos, 12, goxapi.int2str(vol, "BTC"), col_vol)
+            if ownvol:
+                self.addstr(pos, 28, goxapi.int2str(ownvol, "BTC"), col_own)
+
         self.win.bkgd(" ",  COLOR_PAIR["book_text"])
         self.win.erase()
         col_bid = COLOR_PAIR["book_bid"]
@@ -256,6 +265,14 @@ class WinOrderBook(Win):
         col_vol_large = COLOR_PAIR["book_vol_large"]
         col_own = COLOR_PAIR["book_own"]
 
+        sum_total = self.gox.config.get_bool("goxtool", "orderbook_sum_total")
+        group = self.gox.config.get_float("goxtool", "orderbook_group")
+        group = goxapi.float2int(group, self.gox.currency)
+        if group == 0:
+            group = 1
+
+        # print the asks
+        # pylint: disable=C0301
         book = self.gox.orderbook
 
         #
@@ -814,7 +831,9 @@ class DlgNewOrder(Win):
         self.win.border()
         self.addstr(0, 1, " %s " % self.title, self.color)
         self.addstr(2, 2, " price", self.color)
+        self.addstr(2, 30, self.gox.currency)
         self.addstr(4, 2, "volume", self.color)
+        self.addstr(4, 30, "BTC")
         self.addstr(6, 2, "F10 ", self.color + curses.A_REVERSE)
         self.addstr("cancel ", self.color)
         self.addstr("Enter ", self.color + curses.A_REVERSE)
@@ -968,7 +987,6 @@ class StrategyManager():
                     strategy_object = strategy_module.Strategy(self.gox)
                     self.strategy_object_list.append(strategy_object)
 
-                # pylint: disable=W0703
                 except Exception:
                     self.gox.debug("### error while loading strategy %s.py, traceback follows:" % name)
                     self.gox.debug(traceback.format_exc())
@@ -981,26 +999,34 @@ class StrategyManager():
 # Main program
 #
 def main():
-    """main funtion, called from within the curses.wrapper"""
+    """main funtion, called at the start of the program"""
 
+    debug_tb = []
     def curses_loop(stdscr):
-        """This code runs within curses environment"""
+        """Only the code inside this function runs within the curses wrapper"""
 
-        init_colors()
-
-        gox = goxapi.Gox(secret, config)
-
-        conwin = WinConsole(stdscr, gox)
-        bookwin = WinOrderBook(stdscr, gox)
-        statuswin = WinStatus(stdscr, gox)
-        chartwin = WinChart(stdscr, gox)
-
-        logwriter = LogWriter(gox)
-        printhook = PrintHook(gox)
-        strategy_manager = StrategyManager(gox, strat_mod_list)
-
-        gox.start()
+        # this function may under no circumstancs raise an exception, so I'm
+        # wrapping everything into try/except (should actually never happen
+        # anyways but when it happens during coding or debugging it would
+        # leave the terminal in an unusable state and this must be avoded).
+        # We have a list debug_tb[] where we can append tracebacks and
+        # after curses uninitialized properly and the terminal is restored
+        # we can print them.
         try:
+            init_colors()
+            gox = goxapi.Gox(secret, config)
+
+            logwriter = LogWriter(gox)
+            printhook = PrintHook(gox)
+
+            conwin = WinConsole(stdscr, gox)
+            bookwin = WinOrderBook(stdscr, gox)
+            statuswin = WinStatus(stdscr, gox)
+            chartwin = WinChart(stdscr, gox)
+
+            strategy_manager = StrategyManager(gox, strat_mod_list)
+
+            gox.start()
             while True:
                 key = conwin.win.getch()
                 if key == ord("q"):
@@ -1030,15 +1056,42 @@ def main():
         except KeyboardInterrupt:
             gox.debug("got Ctrl+C, trying to shut down cleanly.")
             gox.debug("Hint: did you know you can also exit with 'q'?")
+
         except Exception:
-            gox.debug(traceback.format_exc())
+            debug_tb.append(traceback.format_exc())
 
-        strategy_manager.unload()
-        gox.stop()
-        printhook.close()
-        logwriter.close()
-        # The End.
+        # Now trying to shutdown everything in an orderly manner.
+        # Since we are still inside curses but we don't know whether
+        # the printhook or the logwriter was initialized properly already
+        # or whether it crashed earlier we cannot print here and we also
+        # cannot log, so we put all tracebacks into the debug_tb list to
+        # print them later once the terminal is properly restored again.
+        try:
+            strategy_manager.unload()
+        except Exception:
+            debug_tb.append(traceback.format_exc())
 
+        try:
+            gox.stop()
+        except Exception:
+            debug_tb.append(traceback.format_exc())
+
+        try:
+            printhook.close()
+        except Exception:
+            debug_tb.append(traceback.format_exc())
+
+        try:
+            logwriter.close()
+        except Exception:
+            debug_tb.append(traceback.format_exc())
+
+        # Curses loop ends here, we must reach this point under all circumstances.
+        # Now curses will uninitialize itself and restore the terminal.
+
+
+    # Here it begins. The very first thing is to always set US or GB locale
+    # to have always the same well defined behavior for number formatting.
     for loc in ["en_US.UTF8", "en_GB.UTF8", "en_EN", "en_GB", "C"]:
         try:
             locale.setlocale(locale.LC_NUMERIC, loc)
@@ -1062,10 +1115,17 @@ def main():
         help="do not download full history (useful for debugging)")
     argp.add_argument('--use-http', action="store_true", default="",
         help="use http api for trading (useful when socketio is lagging like hell")
+    argp.add_argument('--password', action="store", default=None,
+        help="password for decryption of stored key. This is a dangerous option "
+            +"because the password might end up being stored in the history file "
+            +"of your shell, for example in ~/.bash_history. Use this only when "
+            +"starting it from within a script and then of course you need to "
+            +"keep this start script in a secure place!")
     args = argp.parse_args()
 
     config = goxapi.GoxConfig("goxtool.ini")
     secret = goxapi.Secret(config)
+    secret.password_from_commandline_option = args.password
     if args.add_secret:
         # prompt for secret, encrypt, write to .ini and then exit the program
         secret.prompt_encrypt()
@@ -1075,13 +1135,20 @@ def main():
         goxapi.FORCE_NO_FULLDEPTH = args.no_fulldepth
         goxapi.FORCE_NO_HISTORY = args.no_history
         goxapi.FORCE_HTTP_API = args.use_http
+
+        # if its ok then we can finally enter the curses main loop
         if secret.prompt_decrypt() != secret.S_FAIL_FATAL:
             curses.wrapper(curses_loop)
-            print
-            print "*******************************************************"
-            print "*  Please donate: 1D7ELjGofBiRUJNwK55DVC3XWYjfN77CA3  *"
-            print "*******************************************************"
-
+            if len(debug_tb):
+                print "\n\n*** error(s) in curses_loop() that caused unclean shutdown:\n"
+                for trb in debug_tb:
+                    print trb
+            else:
+                print
+                print "*******************************************************"
+                print "*  Please donate: 1D7ELjGofBiRUJNwK55DVC3XWYjfN77CA3  *"
+                print "*******************************************************"
 
 if __name__ == "__main__":
     main()
+

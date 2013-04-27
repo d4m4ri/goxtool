@@ -155,6 +155,8 @@ class GoxConfig(SafeConfigParser):
                 ,["gox", "secret_key", ""]
                 ,["gox", "secret_secret", ""]
                 ,["goxtool", "set_xterm_title", "True"]
+                ,["goxtool", "orderbook_group", "0"]
+                ,["goxtool", "orderbook_sum_total", "False"]
                 ]
 
     def __init__(self, filename):
@@ -201,6 +203,14 @@ class GoxConfig(SafeConfigParser):
             return int(vstr)
         except ValueError:
             return 0
+
+    def get_float(self, sect, opt):
+        """get int value from config"""
+        vstr = self.get_safe(sect, opt)
+        try:
+            return float(vstr)
+        except ValueError:
+            return 0.0
 
     def _default(self, section, option, default):
         """create a default option if it does not yet exist"""
@@ -348,6 +358,7 @@ class Secret:
         self.config = config
         self.key = ""
         self.secret = ""
+        self.password_from_commandline_option = None
 
     def decrypt(self, password):
         """decrypt "secret_secret" from the ini file with the given password.
@@ -409,7 +420,11 @@ class Secret:
         if sec == "" or key == "":
             return self.S_NO_SECRET
 
-        password = getpass.getpass("enter passphrase for secret: ")
+        if self.password_from_commandline_option:
+            password = self.password_from_commandline_option
+        else:
+            password = getpass.getpass("enter passphrase for secret: ")
+
         result = self.decrypt(password)
         if result != self.S_OK:
             print("")
@@ -1685,11 +1700,11 @@ class OrderBook(BaseObject):
         """update total fiat on the bid side"""
         self.total_bid += int2float(volume, "BTC") * int2float(price, self.gox.currency)
 
-    def get_own_volume_at(self, price):
+    def get_own_volume_at(self, price, typ=None):
         """returns the sum of the volume of own orders at a given price"""
         volume = 0
         for order in self.owns:
-            if order.price == price:
+            if order.price == price and (not typ or typ == order.typ):
                 volume += order.volume
         return volume
 
