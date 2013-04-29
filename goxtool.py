@@ -272,8 +272,8 @@ class WinOrderBook(Win):
             group = 1
 
         # print the asks
-        # pylint: disable=C0301
         book = self.gox.orderbook
+        cnt = len(book.asks)
 
         #
         # Market order depth (level 2)
@@ -415,8 +415,135 @@ class WinChart(Win):
                     curses.ACS_VLINE, COLOR_PAIR["chart_text"])
 
     def paint(self):
-        """paint the visible portion of the chart"""
+        typ = self.gox.config.get_string("goxtool", "display_right")
+        try:
+            {"history_chart": self.paint_history_chart
+            ,"depth_chart": self.paint_depth_chart
+            }[typ]()
+        except KeyError:
+            self.paint_history_chart()
 
+    def paint_depth_chart(self):
+        """paint a depth chart"""
+
+        # pylint: disable=C0103
+        if self.gox.currency == "JPY":
+            BAR_LEFT_EDGE = 7
+            FORMAT_STRING = "%6.0f"
+        else:
+            BAR_LEFT_EDGE = 8
+            FORMAT_STRING = "%7.2f"
+
+        def paint_depth(pos, price, vol, own, col_price):
+            """paint one row of the depth chart"""
+            i = 0
+            pricestr = FORMAT_STRING % goxapi.int2float(price, self.gox.currency)
+            self.addstr(pos, 0, pricestr, col_price)
+            length = int(vol * mult_x)
+            self.win.hline(pos, BAR_LEFT_EDGE, curses.ACS_CKBOARD, length, col_bar)
+            if own:
+                self.addstr(pos, length + BAR_LEFT_EDGE, "o", col_own)
+
+        self.win.bkgd(" ",  COLOR_PAIR["chart_text"])
+        self.win.erase()
+
+        book = self.gox.orderbook
+        if not book.bid or not book.ask:
+            # orderbook is not initialized yet, paint nothing
+            return
+
+        col_bar = COLOR_PAIR["book_vol"]
+        col_bid = COLOR_PAIR["book_bid"]
+        col_ask = COLOR_PAIR["book_ask"]
+        col_own = COLOR_PAIR["book_own"]
+
+        group = self.gox.config.get_float("goxtool", "depth_chart_group")
+        if group == 0:
+            group = 1
+        group = goxapi.float2int(group, self.gox.currency)
+
+        bin_asks = []
+        bin_bids = []
+        mid = self.height / 2
+
+        # sum up the asks
+        cnt = len(book.asks)
+        bin_vol = 0
+        own_vol = 0
+        pos = mid - 1
+        i = 0
+        while i < cnt and pos >= 0:
+            level = book.asks[i]
+            price = level.price
+            if i == 0:
+                bin_price = int(math.ceil(float(price) / group) * group)
+            if price > bin_price:
+                bin_asks.append((bin_price, bin_vol, own_vol))
+                pos -= 1
+                bin_price = int(math.ceil(float(price) / group) * group)
+                own_vol = level.own_volume
+            else:
+                own_vol += level.own_volume
+            bin_vol += level.volume
+            i += 1
+
+        #append the last one
+        if bin_vol:
+            bin_asks.append((bin_price, bin_vol, own_vol))
+
+        max_vol_ask = bin_vol
+
+        # sum up the bids
+        cnt = len(book.bids)
+        bin_vol = 0
+        own_vol = 0
+        pos = mid + 1
+        i = 0
+        while i < cnt and pos < self.height:
+            level = book.bids[i]
+            price = level.price
+            if i == 0:
+                bin_price = int(math.floor(float(price) / group) * group)
+            if price < bin_price:
+                bin_bids.append((bin_price, bin_vol, own_vol))
+                pos += 1
+                bin_price = int(math.floor(float(price) / group) * group)
+                own_vol = level.own_volume
+            else:
+                own_vol += level.own_volume
+            bin_vol += level.volume * price / book.bid
+            i += 1
+
+        #append the last one
+        if bin_vol:
+            bin_bids.append((bin_price, bin_vol, own_vol))
+
+        max_vol_bid = bin_vol
+
+        if not max_vol_ask:
+            return
+        if not max_vol_bid:
+            return
+
+        max_vol_tot = max(max_vol_ask, max_vol_bid)
+        mult_x = float(self.width - BAR_LEFT_EDGE - 1) / max_vol_tot
+
+        # paint the asks
+        pos = mid - 1
+        while len(bin_asks) and pos >= 0:
+            (price, vol, own) = bin_asks.pop(0)
+            paint_depth(pos, price, vol, own, col_ask)
+            pos -= 1
+
+        # paint the bids
+        pos = mid + 1
+        while len(bin_bids) and pos < self.height:
+            (price, vol, own) = bin_bids.pop(0)
+            paint_depth(pos, price, vol, own, col_bid)
+            pos += 1
+
+    def paint_history_chart(self):
+        """paint a history candlestick chart"""
 
         self.win.bkgd(" ",  COLOR_PAIR["chart_text"])
         self.win.erase()
@@ -529,7 +656,8 @@ class WinStatus(Win):
         # now we will bring BTC and gox.currency to the front and sort the
         # the rest of the list of names by acount balance in descending order
         currency_list.remove("BTC")
-        currency_list.remove(self.gox.currency)
+        if self.gox.currency in currency_list:
+            currency_list.remove(self.gox.currency)
         currency_list.sort(key=lambda name: -self.gox.wallet[name])
         currency_list.insert(0, self.gox.currency)
         currency_list.insert(0, "BTC")
@@ -544,9 +672,10 @@ class WinStatus(Win):
         line1 += "Account: "
         if len(self.sorted_currency_list):
             for currency in self.sorted_currency_list:
-                line1 += currency + " " \
-                + goxapi.int2str(self.gox.wallet[currency], currency).strip() \
-                + " + "
+                if currency in self.gox.wallet:
+                    line1 += currency + " " \
+                    + goxapi.int2str(self.gox.wallet[currency], currency).strip() \
+                    + " + "
             line1 = line1.strip(" +")
         else:
             line1 += "No info (yet)"
@@ -1031,13 +1160,13 @@ def main():
                 key = conwin.win.getch()
                 if key == ord("q"):
                     break
-                if key == curses.KEY_F4:
+                elif key == curses.KEY_F4:
                     DlgNewOrderBid(stdscr, gox).modal()
-                if key == curses.KEY_F5:
+                elif key == curses.KEY_F5:
                     DlgNewOrderAsk(stdscr, gox).modal()
-                if key == curses.KEY_F6:
+                elif key == curses.KEY_F6:
                     DlgCancelOrders(stdscr, gox).modal()
-                if key == curses.KEY_RESIZE:
+                elif key == curses.KEY_RESIZE:
                     # pylint: disable=W0212
                     with goxapi.Signal._lock:
                         stdscr.erase()
@@ -1046,12 +1175,37 @@ def main():
                         bookwin.resize()
                         chartwin.resize()
                         statuswin.resize()
-                    continue
-                if key == ord("l"):
+                elif key == ord("l"):
                     strategy_manager.reload()
-                    continue
-                if key > ord("a") and key < ord("z"):
+
+                # which chart to show on the right side
+                elif key == ord("H"):
+                    set_ini(gox, "display_right", "history_chart",
+                        gox.history.signal_changed, gox.history, None)
+                elif key == ord("D"):
+                    set_ini(gox, "display_right", "depth_chart",
+                        gox.orderbook.signal_changed, gox.orderbook, None)
+
+                #  depth chart step
+                elif key == ord(","): # zoom out
+                    toggle_depth_group(gox, +1)
+                elif key == ord("."): # zoom in
+                    toggle_depth_group(gox, -1)
+
+                # orderbook grouping step
+                elif key == ord("-"): # zoom out (larger step)
+                    toggle_orderbook_group(gox, +1)
+                elif key == ord("+"): # zoom in (smaller step)
+                    toggle_orderbook_group(gox, -1)
+
+                elif key == ord("S"):
+                    toggle_orderbook_sum(gox)
+
+                # lowercase keys go to the strategy module
+                elif key > ord("a") and key < ord("z"):
                     gox.signal_keypress(gox, (key))
+                else:
+                    gox.debug("key pressed: key=%i" % key)
 
         except KeyboardInterrupt:
             gox.debug("got Ctrl+C, trying to shut down cleanly.")
@@ -1109,12 +1263,14 @@ def main():
         help="name of strategy module files, comma separated list, default=strategy.py")
     argp.add_argument('--protocol', action="store", default="",
         help="force protocol (socketio or websocket), ignore setting in .ini")
-    argp.add_argument('--no-fulldepth', action="store_true", default="",
+    argp.add_argument('--no-fulldepth', action="store_true", default=False,
         help="do not download full depth (useful for debugging)")
-    argp.add_argument('--no-history', action="store_true", default="",
+    argp.add_argument('--no-history', action="store_true", default=False,
         help="do not download full history (useful for debugging)")
-    argp.add_argument('--use-http', action="store_true", default="",
-        help="use http api for trading (useful when socketio is lagging like hell")
+    argp.add_argument('--use-http', action="store_true", default=False,
+        help="use http api for trading (more reliable, recommended")
+    argp.add_argument('--no-http', action="store_true", default=False,
+        help="use streaming api for trading (problematic when streaming api disconnects often)")
     argp.add_argument('--password', action="store", default=None,
         help="password for decryption of stored key. This is a dangerous option "
             +"because the password might end up being stored in the history file "
@@ -1135,6 +1291,7 @@ def main():
         goxapi.FORCE_NO_FULLDEPTH = args.no_fulldepth
         goxapi.FORCE_NO_HISTORY = args.no_history
         goxapi.FORCE_HTTP_API = args.use_http
+        goxapi.FORCE_NO_HTTP_API = args.no_http
 
         # if its ok then we can finally enter the curses main loop
         if secret.prompt_decrypt() != secret.S_FAIL_FATAL:
