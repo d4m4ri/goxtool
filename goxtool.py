@@ -42,7 +42,7 @@ import threading
 ORDER_DEPTH_AMOUNT_LARGE = 100 # Amounts >= to this will be highlighted (to change color see "book_vol_large")
 HEIGHT_STATUS   = 2
 HEIGHT_CON      = 7
-WIDTH_ORDERBOOK = 51    # Width of order book panel
+WIDTH_ORDERBOOK = 52    # Width of order book panel
 COLORS = [
     ["con_text",        curses.COLOR_BLUE,    curses.COLOR_CYAN],
     ["status_text",     curses.COLOR_BLUE,    curses.COLOR_CYAN],
@@ -321,7 +321,7 @@ class WinOrderBook(Win):
             )
             ownvol = book.get_own_volume_at(book.asks[i].price)
             if ownvol:
-                self.addstr(pos, 41, "{number:>{pad}.{digits}f}".format(number=goxapi.int2float(ownvol, "BTC"), digits=5, pad=7), col_own)
+                self.addstr(pos, 43, "{number:>{pad}.{digits}f}".format(number=goxapi.int2float(ownvol, "BTC"), digits=5, pad=7), col_own)
             pos += 1
             i += 1
 
