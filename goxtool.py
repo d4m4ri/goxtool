@@ -39,6 +39,7 @@ import threading
 #
 # Curses user interface
 #
+ORDER_DEPTH_AMOUNT_LARGE = 100 # Amounts >= to this will be highlighted (to change color see "book_vol_large")
 HEIGHT_STATUS   = 2
 HEIGHT_CON      = 7
 WIDTH_ORDERBOOK = 52    # Width of order book panel
@@ -286,6 +287,7 @@ class WinOrderBook(Win):
         col_bid = COLOR_PAIR["book_bid"]
         col_ask = COLOR_PAIR["book_ask"]
         col_vol = COLOR_PAIR["book_vol"]
+        col_vol_large = COLOR_PAIR["book_vol_large"]
         col_own = COLOR_PAIR["book_own"]
 
         sum_total = self.gox.config.get_bool("goxtool", "orderbook_sum_total")

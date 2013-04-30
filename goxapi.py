@@ -1073,7 +1073,8 @@ class SocketIOClient(BaseClient):
                     msg = self.socket.recv()
                     self._time_last_received = time.time()
                     if msg == "2::":
-                        self.debug("### ping -> pong")
+#                        self.debug("### ping -> pong")
+                        self.debug("<3")
                         self.socket.send("2::")
                         continue
                     prefix = msg[:10]
@@ -1340,11 +1341,10 @@ class Gox(BaseObject):
             return
         bid = int(msg["buy"]["value_int"])
         ask = int(msg["sell"]["value_int"])
-
-        self.debug(" tick: %s %s" % (
-            int2str(bid, self.curr_quote),
-            int2str(ask, self.curr_quote)
-        ))
+#        self.debug(" tick: %s %s" % (
+#            int2str(bid, self.curr_quote),
+#            int2str(ask, self.curr_quote)
+#        ))
         self.signal_ticker(self, (bid, ask))
 
     def _on_op_private_depth(self, msg):
@@ -1358,13 +1358,12 @@ class Gox(BaseObject):
         price = int(msg["price_int"])
         volume = int(msg["volume_int"])
         total_volume = int(msg["total_volume_int"])
-
-        self.debug("depth: %s: %s @ %s total vol: %s" % (
-            typ,
-            int2str(volume, self.curr_base),
-            int2str(price, self.curr_quote),
-            int2str(total_volume, self.curr_base)
-        ))
+#        self.debug("depth: %s: %s @ %s total vol: %s" % (
+#            typ,
+#            int2str(volume, self.curr_base),
+#            int2str(price, self.curr_quote),
+#            int2str(total_volume, self.curr_base)
+#        ))
         self.signal_depth(self, (typ, price, volume, total_volume))
 
     def _on_op_private_trade(self, msg):
