@@ -39,12 +39,13 @@ import threading
 #
 # Curses user interface
 #
-ORDER_DEPTH_AMOUNT_LARGE = 100 # Amounts >= to this will be highlighted (to change color see "book_vol_large")
 HEIGHT_STATUS   = 2
 HEIGHT_CON      = 7
 WIDTH_ORDERBOOK = 52    # Width of order book panel
 COLORS = [
     ["con_text",        curses.COLOR_BLUE,    curses.COLOR_CYAN],
+    ["con_text_buy",    curses.COLOR_BLUE,    curses.COLOR_GREEN],
+    ["con_text_sell",   curses.COLOR_BLUE,    curses.COLOR_RED],
     ["status_text",     curses.COLOR_BLUE,    curses.COLOR_CYAN],
 
     ["book_text",       curses.COLOR_BLACK,   curses.COLOR_BLUE],
@@ -225,7 +226,30 @@ class WinConsole(Win):
 
     def write(self, txt):
         """write a line of text, scroll if needed"""
-        self.win.addstr("\n" + txt,  COLOR_PAIR["con_text"])
+        # This code would break if the format of
+        # the log messages would ever change!
+
+
+        if " tick:" in txt:
+            if not self.gox.config.get_bool("goxtool", "show_ticker"):
+                return
+        if "depth:" in txt:
+            if not self.gox.config.get_bool("goxtool", "show_depth"):
+                return
+        if "trade:" in txt:
+            if "own order" in txt:
+                if not self.gox.config.get_bool("goxtool", "show_trade_own"):
+                    return
+            else:
+                if not self.gox.config.get_bool("goxtool", "show_trade"):
+                    return
+
+        col = COLOR_PAIR["con_text"]
+        if "trade: bid:" in txt:
+            col = COLOR_PAIR["con_text_buy"] + curses.A_BOLD
+        if "trade: ask:" in txt:
+            col = COLOR_PAIR["con_text_sell"] + curses.A_BOLD
+        self.win.addstr("\n" + txt,  col)
         self.done_paint()
 
 #
@@ -252,22 +276,21 @@ class WinOrderBook(Win):
 
         def paint_row(pos, price, vol, ownvol, color):
             """paint a row in the orderbook (bid or ask)"""
-            self.addstr(pos, 0,  goxapi.int2str(price, book.gox.currency), color)
-            self.addstr(pos, 12, goxapi.int2str(vol, "BTC"), col_vol)
+            self.addstr(pos, 0,  goxapi.int2str(price, book.gox.curr_quote), color)
+            self.addstr(pos, 12, goxapi.int2str(vol, book.gox.curr_base), col_vol)
             if ownvol:
-                self.addstr(pos, 28, goxapi.int2str(ownvol, "BTC"), col_own)
+                self.addstr(pos, 28, goxapi.int2str(ownvol, book.gox.curr_base), col_own)
 
         self.win.bkgd(" ",  COLOR_PAIR["book_text"])
         self.win.erase()
         col_bid = COLOR_PAIR["book_bid"]
         col_ask = COLOR_PAIR["book_ask"]
         col_vol = COLOR_PAIR["book_vol"]
-        col_vol_large = COLOR_PAIR["book_vol_large"]
         col_own = COLOR_PAIR["book_own"]
 
         sum_total = self.gox.config.get_bool("goxtool", "orderbook_sum_total")
         group = self.gox.config.get_float("goxtool", "orderbook_group")
-        group = goxapi.float2int(group, self.gox.currency)
+        group = goxapi.float2int(group, self.gox.curr_quote)
         if group == 0:
             group = 1
 
@@ -333,10 +356,10 @@ class WinOrderBook(Win):
         if self.gox.config.get_bool("goxtool", "set_xterm_title"):
             last_candle = self.gox.history.last_candle()
             if last_candle:
-                title = goxapi.int2str(last_candle.cls, self.gox.currency).strip()
+                title = goxapi.int2str(last_candle.cls, self.gox.curr_quote).strip()
                 title += " - goxtool -"
-                title += " bid:" + goxapi.int2str(book.bid, self.gox.currency).strip()
-                title += " ask:" + goxapi.int2str(book.ask, self.gox.currency).strip()
+                title += " bid:" + goxapi.int2str(book.bid, self.gox.curr_quote).strip()
+                title += " ask:" + goxapi.int2str(book.ask, self.gox.curr_quote).strip()
                 curses.putp("\033]0;%s\007" % title)
 
 #
@@ -427,7 +450,7 @@ class WinChart(Win):
         """paint a depth chart"""
 
         # pylint: disable=C0103
-        if self.gox.currency == "JPY":
+        if self.gox.curr_quote == "JPY":
             BAR_LEFT_EDGE = 7
             FORMAT_STRING = "%6.0f"
         else:
@@ -436,10 +459,10 @@ class WinChart(Win):
 
         def paint_depth(pos, price, vol, own, col_price):
             """paint one row of the depth chart"""
-            i = 0
-            pricestr = FORMAT_STRING % goxapi.int2float(price, self.gox.currency)
+            pricestr = FORMAT_STRING % goxapi.int2float(price, self.gox.curr_quote)
             self.addstr(pos, 0, pricestr, col_price)
             length = int(vol * mult_x)
+            # pylint: disable=E1101
             self.win.hline(pos, BAR_LEFT_EDGE, curses.ACS_CKBOARD, length, col_bar)
             if own:
                 self.addstr(pos, length + BAR_LEFT_EDGE, "o", col_own)
@@ -460,7 +483,7 @@ class WinChart(Win):
         group = self.gox.config.get_float("goxtool", "depth_chart_group")
         if group == 0:
             group = 1
-        group = goxapi.float2int(group, self.gox.currency)
+        group = goxapi.float2int(group, self.gox.curr_quote)
 
         bin_asks = []
         bin_bids = []
@@ -612,7 +635,7 @@ class WinChart(Win):
                 if posy < self.height - 1:
                     self.addstr(
                         posy, posx,
-                        goxapi.int2str(labelprice, self.gox.currency),
+                        goxapi.int2str(labelprice, self.gox.curr_quote),
                         COLOR_PAIR["chart_text"]
                     )
                 labelprice += step
@@ -653,22 +676,25 @@ class WinStatus(Win):
         if len(currency_list) == len(self.sorted_currency_list):
             return
 
-        # now we will bring BTC and gox.currency to the front and sort the
+        # now we will bring base and quote currency to the front and sort the
         # the rest of the list of names by acount balance in descending order
-        currency_list.remove("BTC")
-        if self.gox.currency in currency_list:
-            currency_list.remove(self.gox.currency)
+        if self.gox.curr_base in currency_list:
+            currency_list.remove(self.gox.curr_base)
+        if self.gox.curr_quote in currency_list:
+            currency_list.remove(self.gox.curr_quote)
         currency_list.sort(key=lambda name: -self.gox.wallet[name])
-        currency_list.insert(0, self.gox.currency)
-        currency_list.insert(0, "BTC")
+        currency_list.insert(0, self.gox.curr_quote)
+        currency_list.insert(0, self.gox.curr_base)
         self.sorted_currency_list = currency_list
 
     def paint(self):
         """paint the complete status"""
+        cbase = self.gox.curr_base
+        cquote = self.gox.curr_quote
         self.sort_currency_list_if_changed()
         self.win.bkgd(" ", COLOR_PAIR["status_text"])
         self.win.erase()
-        line1 = "Currency: " + self.gox.currency + " | "
+        line1 = "Currency: " + cquote + " | "
         line1 += "Account: "
         if len(self.sorted_currency_list):
             for currency in self.sorted_currency_list:
@@ -842,8 +868,8 @@ class DlgCancelOrders(DlgListItems):
 
         self.addstr(posy, 2, marker, attr)
         self.addstr(posy, 5, order.typ, attr)
-        self.addstr(posy, 9, goxapi.int2str(order.price, self.gox.currency), attr)
-        self.addstr(posy, 22, goxapi.int2str(order.volume, "BTC"), attr)
+        self.addstr(posy, 9, goxapi.int2str(order.price, self.gox.curr_quote), attr)
+        self.addstr(posy, 22, goxapi.int2str(order.volume, self.gox.curr_base), attr)
 
     def _do_cancel(self):
         """cancel all selected orders (or the order under cursor if empty)"""
@@ -960,9 +986,9 @@ class DlgNewOrder(Win):
         self.win.border()
         self.addstr(0, 1, " %s " % self.title, self.color)
         self.addstr(2, 2, " price", self.color)
-        self.addstr(2, 30, self.gox.currency)
+        self.addstr(2, 30, self.gox.curr_quote)
         self.addstr(4, 2, "volume", self.color)
-        self.addstr(4, 30, "BTC")
+        self.addstr(4, 30, self.gox.curr_base)
         self.addstr(6, 2, "F10 ", self.color + curses.A_REVERSE)
         self.addstr("cancel ", self.color)
         self.addstr("Enter ", self.color + curses.A_REVERSE)
@@ -1024,8 +1050,8 @@ class DlgNewOrderBid(DlgNewOrder):
             "New buy order")
 
     def do_submit(self, price, volume):
-        price = goxapi.float2int(price, self.gox.currency)
-        volume = goxapi.float2int(volume, "BTC")
+        price = goxapi.float2int(price, self.gox.curr_quote)
+        volume = goxapi.float2int(volume, self.gox.curr_base)
         self.gox.buy(price, volume)
 
 
@@ -1037,8 +1063,8 @@ class DlgNewOrderAsk(DlgNewOrder):
             "New sell order")
 
     def do_submit(self, price, volume):
-        price = goxapi.float2int(price, self.gox.currency)
-        volume = goxapi.float2int(volume, "BTC")
+        price = goxapi.float2int(price, self.gox.curr_quote)
+        volume = goxapi.float2int(volume, self.gox.curr_base)
         self.gox.sell(price, volume)
 
 #
@@ -1124,6 +1150,52 @@ class StrategyManager():
                 self.gox.debug("### could not import %s.py, traceback follows:" % name)
                 self.gox.debug(traceback.format_exc())
 
+
+def toggle_setting(gox, alternatives, option_name, direction):
+    """toggle a setting in the ini file"""
+    # pylint: disable=W0212
+    with goxapi.Signal._lock:
+        setting = gox.config.get_string("goxtool", option_name)
+        try:
+            newindex = (alternatives.index(setting) + direction) % len(alternatives)
+        except ValueError:
+            newindex = 0
+        gox.config.set("goxtool", option_name, alternatives[newindex])
+        gox.config.save()
+
+def toggle_depth_group(gox, direction):
+    """toggle the step width of the depth chart"""
+    if gox.curr_quote == "JPY":
+        alt = ["10", "25", "50", "100", "200", "500", "1000"]
+    else:
+        alt = ["0.1", "0.25", "0.5", "1", "2", "5", "10"]
+    toggle_setting(gox, alt, "depth_chart_group", direction)
+    gox.orderbook.signal_changed(gox.orderbook, None)
+
+def toggle_orderbook_group(gox, direction):
+    """toggle the group width of the orderbook"""
+    if gox.curr_quote == "JPY":
+        alt = ["0", "10", "25", "50", "100", "200", "500", "1000"]
+    else:
+        alt = ["0", "0.1", "0.25", "0.5", "1", "2", "5", "10"]
+    toggle_setting(gox, alt, "orderbook_group", direction)
+    gox.orderbook.signal_changed(gox.orderbook, None)
+
+def toggle_orderbook_sum(gox):
+    """toggle the summing in the orderbook on and off"""
+    alt = ["False", "True"]
+    toggle_setting(gox, alt, "orderbook_sum_total", 1)
+    gox.orderbook.signal_changed(gox.orderbook, None)
+
+def set_ini(gox, setting, value, signal, signal_sender, signal_params):
+    """set the ini value and then send a signal"""
+    # pylint: disable=W0212
+    with goxapi.Signal._lock:
+        gox.config.set("goxtool", setting, value)
+        gox.config.save()
+    signal(signal_sender, signal_params)
+
+#
 #
 # Main program
 #

@@ -66,7 +66,7 @@ USER_AGENT = "goxtool.py"
 
 def int2str(value_int, currency):
     """return currency integer formatted as a string"""
-    if currency == "BTC":
+    if currency in "BTC LTC NMC":
         return ("%16.8f" % (value_int / 100000000.0))
     if currency == "JPY":
         return ("%12.3f" % (value_int / 1000.0))
@@ -75,7 +75,7 @@ def int2str(value_int, currency):
 
 def int2float(value_int, currency):
     """convert integer to float, determine the factor by currency name"""
-    if currency == "BTC":
+    if currency in "BTC LTC NMC":
         return value_int / 100000000.0
     if currency == "JPY":
         return value_int / 1000.0
@@ -84,7 +84,7 @@ def int2float(value_int, currency):
 
 def float2int(value_float, currency):
     """convert float value to integer, determine the factor by currency name"""
-    if currency == "BTC":
+    if currency in "BTC LTC NMC":
         return int(round(value_float * 100000000))
     if currency == "JPY":
         return int(round(value_float * 1000))
@@ -146,7 +146,8 @@ class GoxConfig(SafeConfigParser):
     in its constructor for the ini file, you can have separate configurations
     for separate Gox() instances"""
 
-    _DEFAULTS = [["gox", "currency", "USD"]
+    _DEFAULTS = [["gox", "base_currency", "BTC"]
+                ,["gox", "quote_currency", "USD"]
                 ,["gox", "use_ssl", "True"]
                 ,["gox", "use_plain_old_websocket", "True"]
                 ,["gox", "use_http_api", "True"]
@@ -160,6 +161,10 @@ class GoxConfig(SafeConfigParser):
                 ,["goxtool", "orderbook_sum_total", "False"]
                 ,["goxtool", "display_right", "history_chart"]
                 ,["goxtool", "depth_chart_group", "1"]
+                ,["goxtool", "show_ticker", "True"]
+                ,["goxtool", "show_depth", "True"]
+                ,["goxtool", "show_trade", "True"]
+                ,["goxtool", "show_trade_own", "True"]
                 ]
 
     def __init__(self, filename):
@@ -168,6 +173,13 @@ class GoxConfig(SafeConfigParser):
         self.load()
         for (sect, opt, default) in self._DEFAULTS:
             self._default(sect, opt, default)
+
+        # upgrade from deprecated "currency" to "quote_currency"
+        # todo: remove this piece of code again in a few months
+        if self.has_option("gox", "currency"):
+            self.set("gox", "quote_currency", self.get_string("gox", "currency"))
+            self.remove_option("gox", "currency")
+            self.save()
 
     def save(self):
         """save the config to the .ini file"""
@@ -557,6 +569,10 @@ class History(BaseObject):
         """process the result of the fullhistory request"""
         (history) = data
 
+        if not len(history):
+            self.debug("### history download was empty")
+            return
+
         def get_time_round(date):
             """round timestamp to current candle timeframe"""
             return int(date / self.timeframe) * self.timeframe
@@ -605,7 +621,7 @@ class BaseClient(BaseObject):
     _last_nonce = 0
     _nonce_lock = threading.Lock()
 
-    def __init__(self, currency, secret, config):
+    def __init__(self, curr_base, curr_quote, secret, config):
         BaseObject.__init__(self)
 
         self.signal_recv        = Signal()
@@ -615,7 +631,11 @@ class BaseClient(BaseObject):
         self._timer = Timer(60)
         self._timer.connect(self.slot_timer)
 
-        self.currency = currency
+        self.curr_base = curr_base
+        self.curr_quote = curr_quote
+
+        self.currency = curr_quote # deprecated, use curr_quote instead
+
         self.secret = secret
         self.config = config
         self.socket = None
@@ -686,7 +706,8 @@ class BaseClient(BaseObject):
             use_ssl = self.config.get_bool("gox", "use_ssl")
             proto = {True: "https", False: "http"}[use_ssl]
             fulldepth = http_request(proto + "://" +  HTTP_HOST \
-                + "/api/2/BTC" + self.currency + "/money/depth/full")
+                + "/api/2/" + self.curr_base + self.curr_quote \
+                + "/money/depth/full")
             self.signal_fulldepth(self, (json.loads(fulldepth)))
 
         start_thread(fulldepth_thread)
@@ -713,8 +734,8 @@ class BaseClient(BaseObject):
             use_ssl = self.config.get_bool("gox", "use_ssl")
             proto = {True: "https", False: "http"}[use_ssl]
             json_hist = http_request(proto + "://" +  HTTP_HOST \
-                + "/api/2/BTC" + self.currency + "/money/trades"
-                + querystring)
+                + "/api/2/" + self.curr_base + self.curr_quote \
+                + "/money/trades" + querystring)
             history = json.loads(json_hist)
             if history["result"] == "success":
                 self.signal_fullhistory(self, history["data"])
@@ -824,11 +845,6 @@ class BaseClient(BaseObject):
         self.debug("### (%s) calling %s" % (proto, url))
         return json.loads(http_request(url, post, headers))
 
-        #req = URLRequest(url, post, headers)
-        #with contextlib.closing(urlopen(req, post)) as res:
-        #    return json.load(res)
-
-
     def send_signed_call(self, api_endpoint, params, reqid):
         """send a signed (authenticated) API call over the socket.io.
         This method will only succeed if the secret key is available,
@@ -847,8 +863,8 @@ class BaseClient(BaseObject):
             "call"     : api_endpoint,
             "nonce"    : nonce,
             "params"   : params,
-            "currency" : self.currency,
-            "item"     : "BTC"
+            "currency" : self.curr_quote,
+            "item"     : self.curr_base
         })
 
         # pylint: disable=E1101
@@ -872,7 +888,7 @@ class BaseClient(BaseObject):
             params = {"type": typ, "amount_int": volume}
 
         if self.use_http():
-            api = "BTC%s/money/order/add" % self.currency
+            api = "%s%s/money/order/add" % (self.curr_base , self.curr_quote)
             self.enqueue_http_request(api, params, reqid)
         else:
             api = "order/add"
@@ -902,8 +918,8 @@ class WebsocketClient(BaseClient):
     """this implements a connection to MtGox through the older (but faster)
     websocket protocol. Unfortuntely its just as unreliable as the socket.io."""
 
-    def __init__(self, currency, secret, config):
-        BaseClient.__init__(self, currency, secret, config)
+    def __init__(self, curr_base, curr_quote, secret, config):
+        BaseClient.__init__(self, curr_base, curr_quote, secret, config)
         self.hostname = WEBSOCKET_HOST
 
     def _recv_thread_func(self):
@@ -919,7 +935,7 @@ class WebsocketClient(BaseClient):
         while not self._terminating:  #loop 0 (connect, reconnect)
             try:
                 ws_url = wsp + self.hostname \
-                    + "/mtgox?Currency=" + self.currency
+                    + "/mtgox?Currency=" + self.curr_quote
 
                 self.debug("trying plain old Websocket: %s ... " % ws_url)
 
@@ -1021,8 +1037,8 @@ class SocketIOClient(BaseClient):
     """this implements a connection to MtGox using the new socketIO protocol.
     This should replace the older plain websocket API"""
 
-    def __init__(self, currency, secret, config):
-        BaseClient.__init__(self, currency, secret, config)
+    def __init__(self, curr_base, curr_quote, secret, config):
+        BaseClient.__init__(self, curr_base, curr_quote, secret, config)
         self.hostname = SOCKETIO_HOST
         self._timer.connect(self.slot_keepalive_timer)
 
@@ -1039,7 +1055,7 @@ class SocketIOClient(BaseClient):
 
                 self.socket = SocketIO()
                 self.socket.connect(wsp + self.hostname + "/socket.io/1",
-                    query="Currency=" + self.currency)
+                    query="Currency=" + self.curr_quote)
 
                 self._time_last_received = time.time()
                 self.connected = True
@@ -1057,8 +1073,7 @@ class SocketIOClient(BaseClient):
                     msg = self.socket.recv()
                     self._time_last_received = time.time()
                     if msg == "2::":
-                        #self.debug("### ping -> pong")
-                        self.debug("<3")
+                        self.debug("### ping -> pong")
                         self.socket.send("2::")
                         continue
                     prefix = msg[:10]
@@ -1121,7 +1136,10 @@ class Gox(BaseObject):
         self.count_submitted = 0  # number of submitted orders not yet acked
 
         self.config = config
-        self.currency = config.get("gox", "currency", "USD")
+        self.curr_base = config.get_string("gox", "base_currency")
+        self.curr_quote = config.get_string("gox", "quote_currency")
+
+        self.currency = self.curr_quote # deprecated, use curr_quote instead
 
         Signal.signal_error.connect(self.signal_debug)
 
@@ -1140,9 +1158,9 @@ class Gox(BaseObject):
         if "websocket" in FORCE_PROTOCOL:
             use_websocket = True
         if use_websocket:
-            self.client = WebsocketClient(self.currency, secret, config)
+            self.client = WebsocketClient(self.curr_base, self.curr_quote, secret, config)
         else:
-            self.client = SocketIOClient(self.currency, secret, config)
+            self.client = SocketIOClient(self.curr_base, self.curr_quote, secret, config)
 
         self.client.signal_debug.connect(self.signal_debug)
         self.client.signal_recv.connect(self.slot_recv)
@@ -1156,7 +1174,7 @@ class Gox(BaseObject):
 
     def start(self):
         """connect to MtGox and start receiving events."""
-        self.debug("starting gox streaming API, currency=" + self.currency)
+        self.debug("starting gox streaming API, currency=" + self.curr_quote)
         self.client.start()
 
     def stop(self):
@@ -1253,8 +1271,8 @@ class Gox(BaseObject):
             self.debug("### got own order list")
             self.count_submitted = 0
             self.orderbook.init_own(result)
-            self.debug("### have %d own orders for BTC/%s" %
-                (len(self.orderbook.owns), self.currency))
+            self.debug("### have %d own orders for %s/%s" %
+                (len(self.orderbook.owns), self.curr_base, self.curr_quote))
 
         elif reqid == "info":
             self.debug("### got account info")
@@ -1316,34 +1334,44 @@ class Gox(BaseObject):
     def _on_op_private_ticker(self, msg):
         """handle incoming ticker message (op=private, private=ticker)"""
         msg = msg["ticker"]
-        if msg["sell"]["currency"] != self.currency:
+        if msg["sell"]["currency"] != self.curr_quote:
             return
-        ask = int(msg["sell"]["value_int"])
+        if msg["item"] != self.curr_base:
+            return
         bid = int(msg["buy"]["value_int"])
+        ask = int(msg["sell"]["value_int"])
 
-#        self.debug(" tick:  bid:", int2str(bid, self.currency),
-#            "ask:", int2str(ask, self.currency))
+        self.debug(" tick: %s %s" % (
+            int2str(bid, self.curr_quote),
+            int2str(ask, self.curr_quote)
+        ))
         self.signal_ticker(self, (bid, ask))
 
     def _on_op_private_depth(self, msg):
         """handle incoming depth message (op=private, private=depth)"""
         msg = msg["depth"]
-        if msg["currency"] != self.currency:
+        if msg["currency"] != self.curr_quote:
             return
-        type_str = msg["type_str"]
+        if msg["item"] != self.curr_base:
+            return
+        typ = msg["type_str"]
         price = int(msg["price_int"])
         volume = int(msg["volume_int"])
         total_volume = int(msg["total_volume_int"])
 
-#        self.debug(
-#            "depth: ", type_str+":", int2str(price, self.currency),
-#            "vol:", int2str(volume, "BTC"),
-#            "total vol:", int2str(total_volume, "BTC"))
-        self.signal_depth(self, (type_str, price, volume, total_volume))
+        self.debug("depth: %s: %s @ %s total vol: %s" % (
+            typ,
+            int2str(volume, self.curr_base),
+            int2str(price, self.curr_quote),
+            int2str(total_volume, self.curr_base)
+        ))
+        self.signal_depth(self, (typ, price, volume, total_volume))
 
     def _on_op_private_trade(self, msg):
         """handle incoming trade mesage (op=private, private=trade)"""
-        if msg["trade"]["price_currency"] != self.currency:
+        if msg["trade"]["price_currency"] != self.curr_quote:
+            return
+        if msg["trade"]["item"] != self.curr_base:
             return
         if msg["channel"] == "dbf1dee9-4f2e-4a08-8cb7-748919a71b21":
             own = False
@@ -1354,11 +1382,19 @@ class Gox(BaseObject):
         volume = int(msg["trade"]["amount_int"])
         typ = msg["trade"]["trade_type"]
 
-        self.debug(
-            "trade:      ", int2str(price, self.currency),
-            "vol:", int2str(volume, "BTC"),
-            "type:", typ
-        )
+        if own:
+            self.debug("trade: %s: %s @ %s (own order filled)" % (
+                typ,
+                int2str(volume, self.curr_base),
+                int2str(price, self.curr_quote)
+            ))
+        else:
+            self.debug("trade: %s: %s @ %s" % (
+                typ,
+                int2str(volume, self.curr_base),
+                int2str(price, self.curr_quote)
+            ))
+
         self.signal_trade(self, (date, price, volume, typ, own))
 
     def _on_op_private_user_order(self, msg):
@@ -1366,7 +1402,7 @@ class Gox(BaseObject):
         order = msg["user_order"]
         oid = order["oid"]
         if "price" in order:
-            if order["currency"] == self.currency:
+            if order["currency"] == self.curr_quote and order["item"] == self.curr_base:
                 price = int(order["price"]["value_int"])
                 volume = int(order["amount"]["value_int"])
                 typ = order["type"]
@@ -1542,11 +1578,13 @@ class OrderBook(BaseObject):
         own orders list"""
         (dummy_date, price, volume, typ, own) = data
         if own:
-            self.debug("own order was filled")
-            # nothing special to do here, there will also be
+            # nothing special to do here (yet), there will also be
             # separate user_order messages to update my owns list
-
+            # and a copy of this trade message in the pblic channel
+            pass
         else:
+            # we update the orderbook. We could also wait for the depth
+            # message but we update the orderbook immediately.
             voldiff = -volume
             if typ == "bid":  # tryde_type=bid means an ask order was filled
                 self._repair_crossed_asks(price)
@@ -1583,7 +1621,7 @@ class OrderBook(BaseObject):
                     order = self.owns[i]
                     self.debug(
                         "### removing order %s " % oid,
-                        "price:", int2str(order.price, self.gox.currency),
+                        "price:", int2str(order.price, self.gox.curr_quote),
                         "type:", order.typ)
 
                     # remove it from owns...
@@ -1603,7 +1641,7 @@ class OrderBook(BaseObject):
                     found = True
                     self.debug(
                         "### updating order %s " % oid,
-                        "volume:", int2str(volume, "BTC"),
+                        "volume:", int2str(volume, self.gox.curr_base),
                         "status:", status)
                     order.volume = volume
                     order.status = status
@@ -1612,7 +1650,7 @@ class OrderBook(BaseObject):
             if not found:
                 self.debug(
                     "### adding order %s " % oid,
-                    "volume:", int2str(volume, "BTC"),
+                    "volume:", int2str(volume, self.gox.curr_base),
                     "status:", status)
                 self.owns.append(Order(price, volume, typ, oid, status))
 
@@ -1651,8 +1689,10 @@ class OrderBook(BaseObject):
             self._update_level_own_volume(
                 order.typ, order.price, self.get_own_volume_at(order.price, order.typ))
 
-        self.bid = self.bids[0].price
-        self.ask = self.asks[0].price
+        if len(self.bids):
+            self.bid = self.bids[0].price
+        if len(self.asks):
+            self.ask = self.asks[0].price
         self.signal_changed(self, None)
 
     def _repair_crossed_bids(self, bid):
@@ -1677,82 +1717,68 @@ class OrderBook(BaseObject):
     def _update_asks(self, price, total_vol):
         """update volume at this price level, remove entire level
         if empty after update, add new level if needed."""
-        for i in range(len(self.asks)):
-            level = self.asks[i]
-            if level.price == price:
-                # update existing level
-                voldiff = total_vol - level.volume
-                if total_vol == 0:
-                    self.asks.pop(i)
-                else:
-                    level.volume = total_vol
-                self._update_total_ask(voldiff)
-                return
-            if level.price > price and total_vol > 0:
-                # insert before here and return
-                lnew = Level(price, total_vol)
-                self.asks.insert(i, lnew)
-                self._update_total_ask(total_vol)
-                return
-
-        # still here? -> end of list or empty list.
-        if total_vol > 0:
-            lnew = Level(price, total_vol)
-            self.asks.append(lnew)
-            self._update_total_ask(total_vol)
+        (index, level) = self._find_level_or_insert_new("ask", price)
+        voldiff = total_vol - level.volume
+        if total_vol == 0:
+            self.asks.pop(index)
+        else:
+            level.volume = total_vol
+        self._update_total_ask(voldiff)
 
     def _update_bids(self, price, total_vol):
         """update volume at this price level, remove entire level
         if empty after update, add new level if needed."""
-        for i in range(len(self.bids)):
-            level = self.bids[i]
-            if level.price == price:
-                # update existing level
-                voldiff = total_vol - level.volume
-                if total_vol == 0:
-                    self.bids.pop(i)
-                else:
-                    level.volume = total_vol
-                self._update_total_bid(voldiff, price)
-                return
-            if level.price < price and total_vol > 0:
-                # insert before here and return
-                lnew = Level(price, total_vol)
-                self.bids.insert(i, lnew)
-                self._update_total_bid(total_vol, price)
-                return
-
-        # still here? -> end of list or empty list.
-        if total_vol > 0:
-            lnew = Level(price, total_vol)
-            self.bids.append(lnew)
-            self._update_total_bid(total_vol, price)
+        (index, level) = self._find_level_or_insert_new("bid", price)
+        voldiff = total_vol - level.volume
+        if total_vol == 0:
+            self.bids.pop(index)
+        else:
+            level.volume = total_vol
+        self._update_total_bid(voldiff, price)
 
     def _update_total_ask(self, volume):
-        """update total BTC on the ask side"""
-        self.total_ask += int2float(volume, "BTC")
+        """update total volume of base currency on the ask side"""
+        self.total_ask += int2float(volume, self.gox.curr_base)
 
     def _update_total_bid(self, volume, price):
-        """update total fiat on the bid side"""
-        self.total_bid += int2float(volume, "BTC") * int2float(price, self.gox.currency)
+        """update total volume of quote currency on the bid side"""
+        self.total_bid += \
+            int2float(volume, self.gox.curr_base) * int2float(price, self.gox.curr_quote)
 
     def _update_level_own_volume(self, typ, price, own_volume):
-        """update the own_volume cache in the Level object at price,
-        return True if the level existed, return False otherwise"""
-        if typ == "ask":
-            for level in self.asks:
-                if level.price == price:
-                    level.own_volume = own_volume
-                    return True
-        else:
-            for level in self.bids:
-                if level.price == price:
-                    level.own_volume = own_volume
-                    return True
-        return False
+        """update the own_volume cache in the Level object at price"""
+        (_index, level) = self._find_level_or_insert_new(typ, price)
+        level.own_volume = own_volume
+
+    def _find_level_or_insert_new(self, typ, price):
+        """find the Level() object in bids or asks or insert a new
+        Level() at the correct position. Returns tuple (index, level)"""
+        lst = {"ask": self.asks, "bid": self.bids}[typ]
+        comp = {"ask": lambda x, y: x < y, "bid": lambda x, y: x > y}[typ]
+        low = 0
+        high = len(lst)
+
+        # binary search
+        while low < high:
+            mid = (low + high) // 2
+            midval = lst[mid].price
+            if comp(midval, price):
+                low = mid + 1
+            elif comp(price, midval):
+                high = mid
+            else:
+                return (mid, lst[mid])
+
+        # not found, create new Level() and insert
+        level = Level(price, 0)
+        lst.insert(low, level)
+        return (low, level)
 
     def get_own_volume_at(self, price, typ=None):
-        """returns the sum of the volume of own orders at a given price"""
+        """returns the sum of the volume of own orders at a given price. This
+        method will not look up the cache in the bids or asks lists, it will
+        use the authoritative data from the owns list bacause this method is
+        also used to calculate these cached values in the first place."""
         volume = 0
         for order in self.owns:
             if order.price == price and (not typ or typ == order.typ):
@@ -1777,7 +1803,8 @@ class OrderBook(BaseObject):
 
         if own_orders:
             for order in own_orders:
-                if order["currency"] == self.gox.currency:
+                if order["currency"] == self.gox.curr_quote \
+                and order["item"] == self.gox.curr_base:
                     self._add_own(Order(
                         int(order["price"]["value_int"]),
                         int(order["amount"]["value_int"]),
@@ -1800,43 +1827,13 @@ class OrderBook(BaseObject):
     def _add_own(self, order):
         """add order to the list of own orders. This method is used during
         initial download of complete order list and also when a new order
-        is inserted after receiving the ack (after order/add). This will also
-        add dummy levels in the bids and asks list to make them visible in the
-        UI even if they are not yet officially "open" on the server and
-        therefore not yet in the official orderbook. All subsequent updates
-        of the owns list will be done through the event method slot_user_order
-        """
-
-        def insert_dummy(lst, is_ask):
-            """insert an empty (volume=0) dummy level into the bids or asks
-            to make the own order immediately appear in the UI, even if we
-            don't have the full orderbook yet. The dummy orders will be updated
-            later to reflect the true total volume at these prices once we get
-            authoritative data from the server"""
-            for i in range (len(lst)):
-                existing = lst[i]
-                if existing.price == order.price:
-                    return # no dummy needed, an order at this price exists
-                if is_ask:
-                    if existing.price > order.price:
-                        lst.insert(i, Level(order.price, 0))
-                        return
-                else:
-                    if existing.price < order.price:
-                        lst.insert(i, Level(order.price, 0))
-                        return
-
-            # end of list or empty
-            lst.append(Level(order.price, 0))
-
+        is inserted after receiving the ack (after order/add)."""
         if not self.have_own_oid(order.oid):
             self.owns.append(order)
 
-            if order.typ == "ask":
-                insert_dummy(self.asks, True)
-            if order.typ == "bid":
-                insert_dummy(self.bids, False)
-
         # update own volume in that level:
         self._update_level_own_volume(
-            order.typ, order.price, self.get_own_volume_at(order.price, order.typ))
+            order.typ,
+            order.price,
+            self.get_own_volume_at(order.price, order.typ)
+        )
