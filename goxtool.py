@@ -719,8 +719,8 @@ class WinStatus(Win):
 
         line2 = ""
         line2 += "o-lag: %s | " % self.order_lag_txt
-        line2 += "s-lag: %.3f s" % (self.gox.socket_lag / 1e6)
-		line2 += "sum_bid: %s %s | " % (str_fiat, cquote)
+        line2 += "s-lag: %.3f | " % (self.gox.socket_lag / 1e6)
+        line2 += "sum_bid: %s %s | " % (str_fiat, cquote)
         line2 += "sum_ask: %s %s | " % (str_btc, cbase)
         line2 += "ratio: %s %s/%s | " % (str_ratio, cquote, cbase)
         self.addstr(0, 0, line1, COLOR_PAIR["status_text"])
