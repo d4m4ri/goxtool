@@ -697,7 +697,7 @@ class WinStatus(Win):
         self.sort_currency_list_if_changed()
         self.win.bkgd(" ", COLOR_PAIR["status_text"])
         self.win.erase()
-        line1 = "Currency: " + cquote + " | "
+        line1 = "Market: %s%s | " % (cbase, cquote)
         line1 += "Account: "
         if len(self.sorted_currency_list):
             for currency in self.sorted_currency_list:
@@ -720,9 +720,9 @@ class WinStatus(Win):
         line2 = ""
         line2 += "o-lag: %s | " % self.order_lag_txt
         line2 += "s-lag: %.3f | " % (self.gox.socket_lag / 1e6)
+        line2 += "ratio: %s %s/%s | " % (str_ratio, cquote, cbase)
         line2 += "sum_bid: %s %s | " % (str_fiat, cquote)
         line2 += "sum_ask: %s %s | " % (str_btc, cbase)
-        line2 += "ratio: %s %s/%s | " % (str_ratio, cquote, cbase)
         self.addstr(0, 0, line1, COLOR_PAIR["status_text"])
         self.addstr(1, 0, line2, COLOR_PAIR["status_text"])
 
@@ -1145,6 +1145,8 @@ class StrategyManager():
                     reload(strategy_module)
                     strategy_object = strategy_module.Strategy(self.gox)
                     self.strategy_object_list.append(strategy_object)
+                    if hasattr(strategy_object, "name"):
+                        self.gox.strategies[strategy_object.name] = strategy_object
 
                 except Exception:
                     self.gox.debug("### error while loading strategy %s.py, traceback follows:" % name)
@@ -1383,4 +1385,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
