@@ -160,6 +160,7 @@ class GoxConfig(SafeConfigParser):
                 ,["gox", "secret_key", ""]
                 ,["gox", "secret_secret", ""]
                 ,["goxtool", "set_xterm_title", "True"]
+                ,["goxtool", "dont_truncate_logfile", "False"]
                 ,["goxtool", "orderbook_group", "0"]
                 ,["goxtool", "orderbook_sum_total", "False"]
                 ,["goxtool", "display_right", "history_chart"]
@@ -649,6 +650,7 @@ class BaseClient(BaseObject):
         self._terminating = False
         self.connected = False
         self._time_last_received = 0
+        self._time_last_subscribed = 0
         self.history_last_candle = None
 
     def start(self):
@@ -708,9 +710,12 @@ class BaseClient(BaseObject):
             self.debug("requesting initial full depth")
             use_ssl = self.config.get_bool("gox", "use_ssl")
             proto = {True: "https", False: "http"}[use_ssl]
-            fulldepth = http_request(proto + "://" +  HTTP_HOST \
-                + "/api/2/" + self.curr_base + self.curr_quote \
-                + "/money/depth/full")
+            fulldepth = http_request("%s://%s/api/2/%s%s/money/depth/full" % (
+                proto,
+                HTTP_HOST,
+                self.curr_base,
+                self.curr_quote
+            ))
             self.signal_fulldepth(self, (json.loads(fulldepth)))
 
         start_thread(fulldepth_thread)
@@ -729,16 +734,20 @@ class BaseClient(BaseObject):
             # 1309108565, 1309108565842636 <-- first big transaction ID
 
             if since:
-                querystring = "?since=" + str(since * 1000000)
+                querystring = "?since=%i" % (since * 1000000)
             else:
                 querystring = ""
 
             self.debug("requesting history")
             use_ssl = self.config.get_bool("gox", "use_ssl")
             proto = {True: "https", False: "http"}[use_ssl]
-            json_hist = http_request(proto + "://" +  HTTP_HOST \
-                + "/api/2/" + self.curr_base + self.curr_quote \
-                + "/money/trades" + querystring)
+            json_hist = http_request("%s://%s/api/2/%s%s/money/trades%s" % (
+                proto,
+                HTTP_HOST,
+                self.curr_base,
+                self.curr_quote,
+                querystring
+            ))
             history = json.loads(json_hist)
             if history["result"] == "success":
                 self.signal_fullhistory(self, history["data"])
@@ -750,7 +759,7 @@ class BaseClient(BaseObject):
         client (websocket or socketio) will implement its own"""
         raise NotImplementedError()
 
-    def channel_subscribe(self):
+    def channel_subscribe(self, download_market_data=True):
         """subscribe to needed channnels and download initial data (orders,
         account info, depth, history, etc. Some of these might be redundant but
         at the time I wrote this code the socketio server seemed to have a bug,
@@ -774,13 +783,16 @@ class BaseClient(BaseObject):
             self.send_signed_call("private/orders", {}, "orders")
             self.send_signed_call("private/info", {}, "info")
 
-        if self.config.get_bool("gox", "load_fulldepth"):
-            if not FORCE_NO_FULLDEPTH:
-                self.request_fulldepth()
+        if download_market_data:
+            if self.config.get_bool("gox", "load_fulldepth"):
+                if not FORCE_NO_FULLDEPTH:
+                    self.request_fulldepth()
 
-        if self.config.get_bool("gox", "load_history"):
-            if not FORCE_NO_HISTORY:
-                self.request_history()
+            if self.config.get_bool("gox", "load_history"):
+                if not FORCE_NO_HISTORY:
+                    self.request_history()
+
+        self._time_last_subscribed = time.time()
 
     def _http_thread_func(self):
         """send queued http requests to the http API (only used when
@@ -788,27 +800,31 @@ class BaseClient(BaseObject):
         while not self._terminating:
             # pop queued request from the queue and process it
             (api_endpoint, params, reqid) = self.http_requests.get(True)
+            translated = None
             try:
                 answer = self.http_signed_call(api_endpoint, params)
                 if answer["result"] == "success":
                     # the following will reformat the answer in such a way
                     # that we can pass it directly to signal_recv()
                     # as if it had come directly from the websocket
-                    ret = {"op": "result", "id": reqid, "result": answer["data"]}
-                    self.signal_recv(self, (json.dumps(ret)))
+                    translated = {
+                        "op": "result",
+                        "result": answer["data"],
+                        "id": reqid
+                    }
                 else:
                     if "error" in answer:
                         # these are errors like "Order amount is too low"
                         # or "Order not found" and the like, we send them
                         # to signal_recv() as if they had come from the
                         # streaming API beause Gox() can handle these errors.
-                        fake_remark_msg = {
+                        translated = {
                             "op": "remark",
                             "success": False,
                             "message": answer["error"],
+                            "token": answer["token"],
                             "id": reqid
                         }
-                        self.signal_recv(self, (json.dumps(fake_remark_msg)))
                     else:
                         self.debug("### unexpected http result:", answer, reqid)
 
@@ -818,6 +834,9 @@ class BaseClient(BaseObject):
                 # reply or something else. Log the error and don't retry
                 self.debug("### exception in _http_thread_func:",
                     exc, api_endpoint, params, reqid)
+
+            if translated:
+                self.signal_recv(self, (json.dumps(translated)))
 
             self.http_requests.task_done()
 
@@ -849,8 +868,11 @@ class BaseClient(BaseObject):
 
         use_ssl = self.config.get_bool("gox", "use_ssl")
         proto = {True: "https", False: "http"}[use_ssl]
-        url = proto + "://" + HTTP_HOST + "/api/2/" + api_endpoint
-
+        url = "%s://%s/api/2/%s" % (
+            proto,
+            HTTP_HOST,
+            api_endpoint
+        )
         self.debug("### (%s) calling %s" % (proto, url))
         return json.loads(http_request(url, post, headers))
 
@@ -921,6 +943,16 @@ class BaseClient(BaseObject):
                 self.debug("did not receive anything for a long time, disconnecting.")
                 self.socket.close()
                 self.connected = False
+            if time.time() - self._time_last_subscribed > 3600:
+                # sometimes after running for a few hours it
+                # will lose some of the subscriptons for no
+                # obvious reason. I've seen it losing the trades
+                # and the lag channel channel already, and maybe
+                # even others. Simply subscribing again completely
+                # fixes this condition. For this reason we renew
+                # all channel subscriptions once every hour.
+                self.debug("### refreshing channel subscriptions")
+                self.channel_subscribe(False)
 
 
 class WebsocketClient(BaseClient):
@@ -1039,7 +1071,7 @@ class SocketIO(websocket.WebSocket):
             raise IOError("invalid response from socket.io server")
 
         ws_id = result[1].split(":")[0]
-        resource += "/websocket/" + ws_id
+        resource = "%s/websocket/%s" % (resource, ws_id)
         if "query" in options:
             resource = "%s?%s" % (resource, options["query"])
 
@@ -1242,7 +1274,7 @@ class Gox(BaseObject):
                     self.cancel(order.oid)
 
     def cancel_by_type(self, typ=None):
-        """cancel all orders of type (or all orders if type=None)"""
+        """cancel all orders of type (or all orders if typ=None)"""
         for i in reversed(range(len(self.orderbook.owns))):
             order = self.orderbook.owns[i]
             if typ == None or typ == order.typ:

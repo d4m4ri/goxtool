@@ -1079,8 +1079,13 @@ class LogWriter():
     """connects to gox.signal_debug and logs it all to the logfile"""
     def __init__(self, gox):
         self.gox = gox
+        if self.gox.config.get_bool("goxtool", "dont_truncate_logfile"):
+            logfilemode = 'a'
+        else:
+            logfilemode = 'w'
+
         logging.basicConfig(filename='goxtool.log'
-                           ,filemode='w'
+                           ,filemode=logfilemode
                            ,format='%(asctime)s:%(levelname)s:%(message)s'
                            ,level=logging.DEBUG
                            )
@@ -1280,7 +1285,7 @@ def main():
                     toggle_orderbook_sum(gox)
 
                 # lowercase keys go to the strategy module
-                elif key > ord("a") and key < ord("z"):
+                elif key >= ord("a") and key <= ord("z"):
                     gox.signal_keypress(gox, (key))
                 else:
                     gox.debug("key pressed: key=%i" % key)
