@@ -1079,11 +1079,11 @@ class DlgNewOrder(Win):
 
 
 class DlgNewOrderBid(DlgNewOrder):
-    """Modal dialog for new buy order"""
+    """Modal dialog for new limit buy order"""
     def __init__(self, stdscr, gox):
         DlgNewOrder.__init__(self, stdscr, gox,
             COLOR_PAIR["dialog_bid_text"],
-            "New buy order")
+            "New limit buy order")
 
     def do_submit(self, price, volume):
         price = self.gox.quote2int(price)
@@ -1092,11 +1092,11 @@ class DlgNewOrderBid(DlgNewOrder):
 
 
 class DlgNewOrderAsk(DlgNewOrder):
-    """Modal dialog for new sell order"""
+    """Modal dialog for new limit sell order"""
     def __init__(self, stdscr, gox):
         DlgNewOrder.__init__(self, stdscr, gox,
              COLOR_PAIR["dialog_ask_text"],
-            "New sell order")
+            "New limit sell order")
 
     def do_submit(self, price, volume):
         price = self.gox.quote2int(price)
