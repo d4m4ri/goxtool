@@ -43,6 +43,7 @@ ORDER_DEPTH_AMOUNT_LARGE = 100 # Amounts >= to this will be highlighted (to chan
 HEIGHT_STATUS   = 2
 HEIGHT_CON      = 7
 WIDTH_ORDERBOOK = 52    # Width of order book panel
+
 COLORS = [
     ["con_text",        curses.COLOR_BLUE,    curses.COLOR_CYAN],
     ["con_text_buy",    curses.COLOR_BLUE,    curses.COLOR_GREEN],
@@ -69,18 +70,20 @@ COLORS = [
     ["dialog_ask_text", curses.COLOR_RED,    curses.COLOR_WHITE],
 ]
 COLOR_PAIR = {}
-INI_DEFAULTS =  [["goxtool", "set_xterm_title", "True"]
-                ,["goxtool", "dont_truncate_logfile", "False"]
-                ,["goxtool", "orderbook_group", "0"]
-                ,["goxtool", "orderbook_sum_total", "False"]
-                ,["goxtool", "display_right", "history_chart"]
-                ,["goxtool", "depth_chart_group", "1"]
-                ,["goxtool", "depth_chart_sum_total", "True"]
-                ,["goxtool", "show_ticker", "True"]
-                ,["goxtool", "show_depth", "True"]
-                ,["goxtool", "show_trade", "True"]
-                ,["goxtool", "show_trade_own", "True"]
-                ]
+
+INI_DEFAULTS = [
+    ["goxtool", "set_xterm_title", "True"],
+    ["goxtool", "dont_truncate_logfile", "False"],
+    ["goxtool", "orderbook_group", "0"],
+    ["goxtool", "orderbook_sum_total", "False"],
+    ["goxtool", "display_right", "history_chart"],
+    ["goxtool", "depth_chart_group", "1"],
+    ["goxtool", "depth_chart_sum_total", "True"],
+    ["goxtool", "show_ticker", "True"],
+    ["goxtool", "show_depth", "True"],
+    ["goxtool", "show_trade", "True"],
+    ["goxtool", "show_trade_own", "True"],
+]
 
 def init_colors():
     """initialize curses color pairs and give them names. The color pair
@@ -710,18 +713,34 @@ class WinStatus(Win):
         self.sort_currency_list_if_changed()
         self.win.bkgd(" ", COLOR_PAIR["status_text"])
         self.win.erase()
-        line1 = "Market: %s%s | " % (cbase, cquote)
-        line1 += "Account: "
+        line1 = "Account: "
+
+        # Net asset value (NAV)
+        book = self.gox.orderbook
+        bids = book.bids
+        if len(bids) > 0:
+            price = goxapi.int2float(bids[0].price, book.gox.currency)
+        else:
+            price = 1
+        navBtc = 0
+
         if len(self.sorted_currency_list):
             for currency in self.sorted_currency_list:
                 if currency in self.gox.wallet:
-                    line1 += currency + " " \
-                    + goxapi.int2str(self.gox.wallet[currency], currency).strip() \
-                    + " + "
+                    line1 += goxapi.int2str(self.gox.wallet[currency], currency).strip() + "/" + currency + " + "
+                    if currency == cquote:
+                        navBtc += (goxapi.int2float(self.gox.wallet[currency], currency) / price)
+                    elif currency == "BTC":
+                        navBtc += (goxapi.int2float(self.gox.wallet[currency], currency))
             line1 = line1.strip(" +")
+            line1 += " | NAV BTC/" + cquote + ": "
+            line1 += ("{number:.{digits}f}".format(number=navBtc, digits=5))
+            line1 += "/"
+            line1 += ("{number:.{digits}f}".format(number=(navBtc * price), digits=5))
         else:
             line1 += "No info (yet)"
 
+        line1 += " | Market: %s/%s" % (cbase, cquote)
         str_btc = locale.format('%d', self.gox.orderbook.total_ask, 1)
         str_fiat = locale.format('%d', self.gox.orderbook.total_bid, 1)
         if self.gox.orderbook.total_ask:
@@ -731,11 +750,11 @@ class WinStatus(Win):
             str_ratio = "-"
 
         line2 = ""
-        line2 += "o-lag: %s | " % self.order_lag_txt
-        line2 += "s-lag: %.3f | " % (self.gox.socket_lag / 1e6)
-        line2 += "ratio: %s %s/%s | " % (str_ratio, cquote, cbase)
-        line2 += "sum_bid: %s %s | " % (str_fiat, cquote)
-        line2 += "sum_ask: %s %s | " % (str_btc, cbase)
+        line2 += "O-lag: %s | " % self.order_lag_txt
+        line2 += "S-lag: %.3f | " % (self.gox.socket_lag / 1e6)
+        line2 += "Ratio: %s %s/%s | " % (str_ratio, cquote, cbase)
+        line2 += "Bids: %s %s | " % (str_fiat, cquote)
+        line2 += "Asks: %s %s" % (str_btc, cbase)
         self.addstr(0, 0, line1, COLOR_PAIR["status_text"])
         self.addstr(1, 0, line2, COLOR_PAIR["status_text"])
 
