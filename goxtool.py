@@ -48,7 +48,7 @@ COLORS = [
     ["con_text",        curses.COLOR_BLUE,    curses.COLOR_CYAN],
     ["con_text_buy",    curses.COLOR_BLUE,    curses.COLOR_GREEN],
     ["con_text_sell",   curses.COLOR_BLUE,    curses.COLOR_RED],
-    ["status_text",     curses.COLOR_BLUE,    curses.COLOR_CYAN],
+    ["status_text",     curses.COLOR_BLUE,    curses.COLOR_WHITE],
 
     ["book_text",       curses.COLOR_BLACK,   curses.COLOR_BLUE],
     ["book_bid",        curses.COLOR_BLACK,   curses.COLOR_GREEN],
