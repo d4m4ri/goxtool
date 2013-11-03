@@ -31,10 +31,13 @@ import goxapi
 import logging
 import locale
 import math
+import os
 import sys
 import time
 import traceback
 import threading
+
+sys_out = sys.stdout #pylint: disable=C0103
 
 #
 # Curses user interface
@@ -377,7 +380,13 @@ class WinOrderBook(Win):
                 title += " - goxtool -"
                 title += " bid:" + self.gox.quote2str(book.bid).strip()
                 title += " ask:" + self.gox.quote2str(book.ask).strip()
-                curses.putp("\033]0;%s\007" % title)
+
+                term = os.environ["TERM"]
+                # the following is incomplete but better safe than sorry
+                # if you know more terminals then please provide a patch
+                if "xterm" in term or "rxvt" in term:
+                    sys_out.write("\x1b]0;%s\x07" % title)
+                    sys_out.flush()
 
 #
 # WinChart class manages chart windows.
